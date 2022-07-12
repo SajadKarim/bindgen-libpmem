@@ -4,11 +4,19 @@
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
+use std::sync::{Arc, Mutex};
 use std::os::raw::c_void;
 
-pub struct file_handle(*mut c_void);
+#[derive(Debug)]
+pub struct file_handle(Arc<Mutex<*mut c_void>>);
 
-fn pmem_file_create(filepath : &str, len: u64, mapped_len : &mut u64, is_pmem : &mut i32) -> file_handle {
+unsafe impl Send for file_handle {}
+unsafe impl Sync for file_handle {}
+
+pub mod libpmem {
+    use super::*;
+
+pub fn pmem_file_create(filepath : &str, len: u64, mapped_len : &mut u64, is_pmem : &mut i32) -> file_handle {
 
     unsafe {
         let mut handle = pmem_map_file(filepath.as_ptr() as *const i8,
@@ -20,11 +28,11 @@ fn pmem_file_create(filepath : &str, len: u64, mapped_len : &mut u64, is_pmem : 
 
         // TODO: error handling
 
-        file_handle( handle)
+        file_handle( Arc::new(Mutex::new(handle)))
     }
 }
 
-fn pmem_file_open(filepath: &str, mapped_len: &mut u64, is_pmem: &mut i32) -> file_handle {
+pub fn pmem_file_open(filepath: &str, mapped_len: &mut u64, is_pmem: &mut i32) -> file_handle {
 
     unsafe {
         let mut handle = pmem_map_file(filepath.as_ptr() as *const i8, 
@@ -35,28 +43,32 @@ fn pmem_file_open(filepath: &str, mapped_len: &mut u64, is_pmem: &mut i32) -> fi
                                  is_pmem);
 
         // TODO: error handling
-
-        file_handle( handle)
+println!("\n............ pmem file open");
+        file_handle( Arc::new(Mutex::new(handle)))
     }
 }
 
-fn pmem_file_read(filehandle: &file_handle, offset: usize, data: &Vec<u8>, len: usize) {
+pub fn pmem_file_read(filehandle: &file_handle, offset: usize, data: &[u8], len: usize) {
     unsafe {
-       pmem_memcpy(data.as_ptr() as *mut c_void, filehandle.0.add( offset), len as u64, 0);
+       pmem_memcpy(data.as_ptr() as *mut c_void, filehandle.0.lock().unwrap().add( offset), len as u64, 0);
     }
 }
 
-fn pmem_file_write(filehandle: &file_handle, offset: usize, data: &str, len: usize) {
-    println!("\n Writing..{} bytes", len);
+pub fn pmem_file_write(filehandle: &file_handle, offset: usize, data: &[u8], len: usize) -> Result<(), std::io::Error> {
+    println!("\n pmem Writing..{} bytes", len);
     unsafe{
-        pmem_memcpy_persist( filehandle.0.add( offset), data.as_ptr() as *mut c_void, len as u64);
+        pmem_memcpy_persist( filehandle.0.lock().unwrap().add( offset), data.as_ptr() as *mut c_void, len as u64);
+    }
+
+    Ok(())
+}
+
+pub fn pmem_file_close(filehandle: &file_handle, mapped_len: &u64) {
+    unsafe {
+        pmem_unmap(*filehandle.0.lock().unwrap(), *mapped_len);
     }
 }
 
-fn pmem_file_close(filehandle: &file_handle, mapped_len: &u64) {
-    unsafe {
-        pmem_unmap(filehandle.0, *mapped_len);
-    }
 }
 
 #[cfg(test)]
@@ -89,7 +101,7 @@ mod tests {
 //                std::fs::remove_file(&DEST_FILEPATH);
 //            }
 
-            dest_filehandle = pmem_file_open(&DEST_FILEPATH, &mut mapped_len, &mut is_pmem); 
+            dest_filehandle = libpmem::pmem_file_open(&DEST_FILEPATH, &mut mapped_len, &mut is_pmem); 
             //dest_filehandle  = pmem_file_create( &DEST_FILEPATH, 4096, &mut mapped_len, &mut is_pmem);
 
             /*pmemaddr = pmem_map_file(fp2, 0,
@@ -99,22 +111,22 @@ mod tests {
             */
 
             //pmem_memcpy_persist( pmemaddr.0.add(600), k, cc as u64);
-            pmem_file_write(&dest_filehandle, 0, &TEXT, TEXT.chars().count());
-            pmem_file_write(&dest_filehandle, TEXT.chars().count(), &TEXT2, TEXT2.chars().count());
+            libpmem::pmem_file_write(&dest_filehandle, 0, &TEXT, TEXT.chars().count());
+            libpmem::pmem_file_write(&dest_filehandle, TEXT.chars().count(), &TEXT2, TEXT2.chars().count());
 
-            let mut buffer = vec![0; TEXT.chars().count()];
-            pmem_file_read(&dest_filehandle, 0, &buffer, TEXT.chars().count());
+            let mut buffer = [u8; TEXT.chars().count()];
+            libpmem::pmem_file_read(&dest_filehandle, 0, &buffer, TEXT.chars().count());
             println!("\n TEXT length: {}", TEXT.chars().count());
 
-            let mut buffer2 = vec![0; TEXT2.chars().count()];
-            pmem_file_read(&dest_filehandle, TEXT.chars().count(), &buffer2, TEXT2.chars().count());
+            let mut buffer2 = [u8; TEXT2.chars().count()];
+            libpmem::pmem_file_read(&dest_filehandle, TEXT.chars().count(), &buffer2, TEXT2.chars().count());
             println!("\n TEXT2 length: {}", TEXT2.chars().count());
 
 
             //close(src_filehandle);
 	
             //pmem_unmap(pmemaddr.0, mapped_len);
-            pmem_file_close(&dest_filehandle, &mapped_len);
+            libpmem::pmem_file_close(&dest_filehandle, &mapped_len);
 
             let read_string = match std::str::from_utf8(&buffer) {
                 Ok(string) => string,
