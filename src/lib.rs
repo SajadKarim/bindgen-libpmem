@@ -35,7 +35,7 @@ pub mod libpmem {
     }
 
     pub fn pmem_file_open(filepath: &str, mapped_len: &mut u64, is_pmem: &mut i32) -> file_handle {
-        println!("\n trying opening pmem file. {}", filepath);
+        //println!("\n trying opening pmem file. {}", filepath);
         unsafe {
             let mut handle = pmem_map_file(filepath.as_ptr() as *const i8, 
                                      0, // Opening an existing file requires no flag(s).
@@ -49,22 +49,29 @@ pub mod libpmem {
                 None => panic!("\n Failed to map existing pmem.")
             }
         }
+        //println!("\n...returning from pemem red..");
     }
 
-    pub fn pmem_file_read(filehandle: &file_handle, offset: usize, data: &[u8], len: usize) {
-        println!("\n Reading from pmem, offset:{}, len:{}", offset, len);
+    pub fn pmem_file_read(filehandle: &file_handle, offset: usize, data: &mut [u8], len: usize) -> Result<(), std::io::Error>{
+        //println!("\n Reading from pmem, offset:{}, len:{}", offset, len);
+
+            match NonNull::new(*filehandle.0.lock().unwrap()) {
+                Some(ptr) => println!("\n filehandle found"),
+                None => println!("\n filehandle not found")
+            };
+
         unsafe {
             let ret_handle = pmem_memcpy(data.as_ptr() as *mut c_void, filehandle.0.lock().unwrap().add( offset), len as u64, 0);
 
             match NonNull::new(ret_handle) {
-                Some(ptr) => (()),
+                Some(ptr) => Ok(()),
                 None => panic!("\n Failed to read data from pmem.")
             }
         }
     }
 
     pub fn pmem_file_write(filehandle: &file_handle, offset: usize, data: &[u8], len: usize) -> Result<(), std::io::Error>{
-        println!("\n Writing to pmem, offset:{}, len:{}", offset, len);
+        //println!("\n Writing to pmem, offset:{}, len:{}", offset, len);
         unsafe{
             let ret_handle = pmem_memcpy_persist( filehandle.0.lock().unwrap().add( offset), data.as_ptr() as *mut c_void, len as u64);
 
