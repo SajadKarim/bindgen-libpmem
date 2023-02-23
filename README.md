@@ -17,6 +17,8 @@ cd tests
 ./scripts/test.sh
 ```
 
+[`mdbook`](https://rust-lang.github.io/mdBook/)<a href="../Readme.md">Visit W3Schools.com!</a>
+
 ## Documentation
 
 You can find an in-depth documentation and developer guide under
